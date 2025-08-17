@@ -1,71 +1,178 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Template CloudFormation para IaC para a fase 1 do projeto de DevOps da PUCRS (ajustado para importação)"
+Description: Infraestrutura AWS - DevOps na Prática
 
 Parameters:
-  KeyPairName:
-    Type: String
-    Description: "Name of an existing EC2 KeyPair to enable SSH access to the instance."
-
-  InstanceType:
-    Type: String
-    Description: "EC2 instance type for the web server."
-    Default: t2.micro
-    AllowedValues:
-      - t2.micro
-      - t3.micro
-      - t2.small
-      - t3.small
-
-  AMIId:
-    Type: AWS::EC2::Image::Id
-    Description: "ID of the Amazon Machine Image (AMI) for the web server instance."
-    Default: ami-0c02fb55956c7d316 # Amazon Linux 2 AMI (exemplo us-east-1, ajuste para sua região)
-    ConstraintDescription: "Must be a valid AMI ID for your region."
-
-  MyIP:
-    Type: String
-    Description: "IP address allowed to SSH (ex: 203.0.113.25/32)."
-    Default: 0.0.0.0/0
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Nome da chave SSH para acessar as instâncias EC2
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+    Description: Latest Amazon Linux 2 AMI ID
 
 Resources:
-  WebServerSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
+  # -------------------
+  # Rede
+  # -------------------
+  VPC:
+    Type: AWS::EC2::VPC
     Properties:
-      GroupDescription: Enable SSH and HTTP access to the web server
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: DevOpsVPC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH, HTTP and HTTPS
+      VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: !Ref MyIP
+          CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
 
-  WebServerInstance:
+
+  # -------------------
+  # Compute
+  # -------------------
+  EC2Instance:
     Type: AWS::EC2::Instance
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
     Properties:
-      InstanceType: !Ref InstanceType
-      ImageId: !Ref AMIId
-      KeyName: !Ref KeyPairName
+      InstanceType: t2.micro
+      KeyName: !Ref KeyName
+      ImageId: !Ref LatestAmiId
+      SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
-        - !Ref WebServerSecurityGroup
+        - !Ref SecurityGroup
       Tags:
         - Key: Name
-          Value: pipeline-devops
-      UserData: !Base64 | 
-        #!/bin/bash
-        sudo yum update -y
-        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-        sudo yum install -y nodejs git
-        APP_DIR="/home/ec2-user/my-node-app"
-        sudo mkdir -p $APP_DIR
-        sudo chown ec2-user:ec2-user $APP_DIR
-        cd $APP_DIR
-        git clone https://github.com/alexsomera/devops-pipeline .
-        npm install
-        nohup node server.js > app.log 2>&1 &
+          Value: DevOpsAppServer
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+        Subnets:
+          - !Ref PublicSubnet
+          - !Ref PrivateSubnet2
+        SecurityGroups:
+          - !Ref SecurityGroup
+        Tags:
+          - Key: Name
+            Value: DevOpsLB
+
+  # -------------------
+  # Banco de Dados (Opcional)
+  # -------------------
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      AllocatedStorage: 20
+      MasterUsername: admin
+      MasterUserPassword: ChangeMe123!
+      VPCSecurityGroups:
+        - !Ref SecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+  # -------------------
+  # Ferramentas de Suporte
+  # -------------------
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "devops-artifacts-${AWS::AccountId}"
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /devops/app
+      RetentionInDays: 7
+
+Outputs:
+  VPCId:
+    Value: !Ref VPC
+  EC2InstanceId:
+    Value: !Ref EC2Instance
+  LoadBalancerDNS:
+    Value: !GetAtt LoadBalancer.DNSName
+  RDSInstanceEndpoint:
+    Value: !GetAtt RDSInstance.Endpoint.Address
