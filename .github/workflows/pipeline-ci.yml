@@ -12,13 +12,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Executa o CI
         run: echo "CI executado com sucesso!"
-        
-      - name: Clona o repositório do aplicativo
-        uses: actions/checkout@v4
-        with:
-          repository: alexsomera/react-expo-app # O repositório da aplicação
-          path: ./app               # Onde o código da aplicação será clonado
-          token: ${{ secrets.CI_SECRET }} # PAT com permissão de leitura
 
       - name: Instala o Node.js
         uses: actions/setup-node@v3
@@ -27,9 +20,9 @@ jobs:
 
       - name: Instala as dependencias
         run: npm install
-        working-directory: ./app # Execute comandos no diretório do app
 
       - name: Executa testes
         run: npm test
-        working-directory: ./app
 
+      - name: Mensagem de sucesso
+        run: echo "Todos os testes passaram com sucesso!"
