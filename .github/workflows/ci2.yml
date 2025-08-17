@@ -12,12 +12,12 @@ jobs:
       - name: Checkout devops-pipeline
         uses: actions/checkout@v3
 
-      - name: Checkout eact-expo-app
+      - name: Checkout react-expo-app
         uses: actions/checkout@v3
         with:
           repository: alexsomera/react-expo-app # O repositório da aplicação
           path: ./app               # Onde o código da aplicação será clonado
-          token: ${{ secrets.REACT_APP_CI }} # PAT com permissão de leitura
+          token: ${{ secrets.CI_SECRET }} # PAT com permissão de leitura
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
