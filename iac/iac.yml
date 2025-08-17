@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Template CloudFormation para IaC para a fase 1 do projeto de DevOps da PUCRS (ajustado para importação)"
+
+Parameters:
+  KeyPairName:
+    Type: String
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to the instance."
+
+  InstanceType:
+    Type: String
+    Description: "EC2 instance type for the web server."
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t2.small
+      - t3.small
+
+  AMIId:
+    Type: AWS::EC2::Image::Id
+    Description: "ID of the Amazon Machine Image (AMI) for the web server instance."
+    Default: ami-0c02fb55956c7d316 # Amazon Linux 2 AMI (exemplo us-east-1, ajuste para sua região)
+    ConstraintDescription: "Must be a valid AMI ID for your region."
+
+  MyIP:
+    Type: String
+    Description: "IP address allowed to SSH (ex: 203.0.113.25/32)."
+    Default: 0.0.0.0/0
+
+Resources:
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      GroupDescription: Enable SSH and HTTP access to the web server
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MyIP
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AMIId
+      KeyName: !Ref KeyPairName
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: pipeline-devops
+      UserData: !Base64 | 
+        #!/bin/bash
+        sudo yum update -y
+        curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
+        sudo yum install -y nodejs git
+        APP_DIR="/home/ec2-user/my-node-app"
+        sudo mkdir -p $APP_DIR
+        sudo chown ec2-user:ec2-user $APP_DIR
+        cd $APP_DIR
+        git clone https://github.com/alexsomera/devops-pipeline .
+        npm install
+        nohup node server.js > app.log 2>&1 &
