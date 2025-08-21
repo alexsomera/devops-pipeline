@@ -46,8 +46,13 @@ cd pipeline-devops
 npm install
 
 # Para rodar a aplicação
-npm run web
+npm start
 
 # A aplicação estará disponível em:
+http://localhost:3000/
 
-http://localhost:8081/
+# Para executar os testes
+npm test
+
+# Para fazer o build da aplicação
+npm run build

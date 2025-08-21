@@ -5,11 +5,13 @@ on:
     branches: [ "main" ]
    pull_request:
     branches: [ "main" ]
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Executa o CI
         run: echo "CI executado com sucesso!"
 
@@ -21,8 +23,11 @@ jobs:
       - name: Instala as dependencias
         run: npm install
 
-      - name: Executa testes
-        run: npm test
+      - name: Executa testes automatizados
+        run: npm run test:ci
+
+      - name: Faz o build da aplicação
+        run: npm run build
 
       - name: Mensagem de sucesso
         run: echo "Todos os testes passaram com sucesso!"
