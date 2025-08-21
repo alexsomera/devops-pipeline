@@ -13,11 +13,10 @@ O pipeline é executado automaticamente nas seguintes situações:
 
 ### Etapas do Pipeline
 1. **Checkout do código**  
-2. **Instalação de dependências**
-3. **Lint e verificação de qualidade**  
-4. **Execução de testes automatizados**  
-5. **Build da aplicação**
-6. **Notificações** (status de execução no GitHub)
+2. **Instalação de dependências** 
+3. **Execução de testes automatizados**  
+4. **Build da aplicação**
+5. **Notificações** (status de execução no GitHub)
 
 ---
 
