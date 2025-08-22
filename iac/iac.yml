@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Infraestrutura AWS - DevOps na Prática
+Description: Infraestrutura AWS - Rede, Compute, Banco de Dados
 
 Parameters:
   KeyName:
@@ -9,6 +9,14 @@ Parameters:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
     Description: Latest Amazon Linux 2 AMI ID
+  DBUsername:
+    Type: String
+    Default: admin
+    Description: Nome do usuário do banco de dados
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Senha do banco de dados
 
 Resources:
   # -------------------
@@ -33,36 +41,39 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-  PublicSubnet:
+  # Subnets Públicas
+  PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      AvailabilityZone: !Select [0, !GetAZs ""]
       MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: PublicSubnet
 
-  PrivateSubnet1:
+  PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
       CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet1
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  # Subnets Privadas
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
-      AvailabilityZone: !Select [ 1, !GetAZs '' ]
-      Tags:
-        - Key: Name
-          Value: PrivateSubnet2
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -71,21 +82,29 @@ Resources:
 
   PublicRoute:
     Type: AWS::EC2::Route
+    DependsOn: AttachGateway
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  PublicSubnetRouteTableAssociation:
+  PublicSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref PublicSubnet
+      SubnetId: !Ref PublicSubnet1
       RouteTableId: !Ref PublicRouteTable
 
-  SecurityGroup:
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Group
+  AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Enable SSH, HTTP and HTTPS
+      GroupDescription: Permitir acesso HTTP e SSH
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -96,11 +115,6 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-
 
   # -------------------
   # Compute
@@ -111,68 +125,108 @@ Resources:
       InstanceType: t2.micro
       KeyName: !Ref KeyName
       ImageId: !Ref LatestAmiId
-      SubnetId: !Ref PublicSubnet
+      SubnetId: !Ref PublicSubnet1
       SecurityGroupIds:
-        - !Ref SecurityGroup
+        - !Ref AppSecurityGroup
       Tags:
         - Key: Name
-          Value: DevOpsAppServer
+          Value: DevOpsApp
 
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-        Subnets:
-          - !Ref PublicSubnet
-          - !Ref PrivateSubnet2
-        SecurityGroups:
-          - !Ref SecurityGroup
-        Tags:
-          - Key: Name
-            Value: DevOpsLB
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref AppSecurityGroup
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: "80"
+      HealthCheckPath: /
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
 
   # -------------------
-  # Banco de Dados (Opcional)
+  # Banco de Dados
   # -------------------
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
-      DBSubnetGroupDescription: Subnet group for RDS
+      DBSubnetGroupDescription: Subnets privadas para RDS
       SubnetIds:
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
 
-  RDSInstance:
+  MyDB:
     Type: AWS::RDS::DBInstance
     Properties:
-      DBInstanceClass: db.t3.micro
       Engine: mysql
+      DBInstanceClass: db.t3.micro
       AllocatedStorage: 20
-      MasterUsername: admin
-      MasterUserPassword: ChangeMe123!
+      DBName: mydb
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
       VPCSecurityGroups:
-        - !Ref SecurityGroup
+        - !Ref AppSecurityGroup
       DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
 
-  # -------------------
-  # Ferramentas de Suporte
-  # -------------------
-  S3Bucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "devops-artifacts-${AWS::AccountId}"
-
-  CloudWatchLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /devops/app
-      RetentionInDays: 7
-
+# -------------------
+# Outputs
+# -------------------
 Outputs:
-  VPCId:
-    Value: !Ref VPC
-  EC2InstanceId:
-    Value: !Ref EC2Instance
   LoadBalancerDNS:
+    Description: DNS do Load Balancer
     Value: !GetAtt LoadBalancer.DNSName
+
+  EC2InstanceId:
+    Description: ID da instância EC2
+    Value: !Ref EC2Instance
+
+  EC2PublicIP:
+    Description: IP público da instância EC2
+    Value: !GetAtt EC2Instance.PublicIp
+
   RDSInstanceEndpoint:
-    Value: !GetAtt RDSInstance.Endpoint.Address
+    Description: Endpoint do banco de dados RDS
+    Value: !GetAtt MyDB.Endpoint.Address
+
+  VPCId:
+    Description: ID da VPC criada
+    Value: !Ref VPC
+
+  SecurityGroupId:
+    Description: ID do Security Group da aplicação
+    Value: !Ref AppSecurityGroup
+
+  PublicSubnet1Id:
+    Description: ID da primeira Subnet pública
+    Value: !Ref PublicSubnet1
+
+  PublicSubnet2Id:
+    Description: ID da segunda Subnet pública
+    Value: !Ref PublicSubnet2
+
+  PrivateSubnet1Id:
+    Description: ID da primeira Subnet privada
+    Value: !Ref PrivateSubnet1
+
+  PrivateSubnet2Id:
+    Description: ID da segunda Subnet privada
+    Value: !Ref PrivateSubnet2
