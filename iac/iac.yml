@@ -1,22 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Infraestrutura AWS - Rede, Compute, Banco de Dados e Orquestração ECS
+Description: Infraestrutura AWS simplificada - ECS Fargate
 
 Parameters:
-  KeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Nome da chave SSH para acessar as instâncias EC2
-  LatestAmiId:
-    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
-    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
-    Description: Latest Amazon Linux 2 AMI ID
-  DBUsername:
+  ECSExecutionRoleArn:
     Type: String
-    Default: admin
-    Description: Nome do usuário do banco de dados
-  DBPassword:
-    Type: String
-    NoEcho: true
-    Description: Senha do banco de dados
+    Default: "arn:aws:iam::218596482633:role/LabRole"
+    Description: ARN of the ECS Task Execution Role
 
 Resources:
   # -------------------
@@ -58,23 +47,6 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs ""]
       MapPublicIpOnLaunch: true
 
-  # Subnets Privadas
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      MapPublicIpOnLaunch: false
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.4.0/24
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      MapPublicIpOnLaunch: false
-
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -100,95 +72,8 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-  # Security Group (mantido para compatibilidade com EC2/RDS existentes)
-  AppSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permitir acesso HTTP e SSH
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 22
-          ToPort: 22
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-
   # -------------------
-  # Compute (EC2 - mantido, mas será substituído pelo ECS para a aplicação principal)
-  # -------------------
-  EC2Instance:
-    Type: AWS::EC2::Instance
-    Properties:
-      InstanceType: t2.micro
-      KeyName: !Ref KeyName
-      ImageId: !Ref LatestAmiId
-      SubnetId: !Ref PublicSubnet1
-      SecurityGroupIds:
-        - !Ref AppSecurityGroup
-      Tags:
-        - Key: Name
-          Value: DevOpsApp
-
-  LoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      SecurityGroups:
-        - !Ref AppSecurityGroup
-
-  TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      VpcId: !Ref VPC
-      Protocol: HTTP
-      Port: 80
-      TargetType: instance
-      HealthCheckProtocol: HTTP
-      HealthCheckPort: "80"
-      HealthCheckPath: /
-
-  Listener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref LoadBalancer
-      Protocol: HTTP
-      Port: 80
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref TargetGroup
-
-  # -------------------
-  # Banco de Dados
-  # -------------------
-  DBSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: Subnets privadas para RDS
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-
-  MyDB:
-    Type: AWS::RDS::DBInstance
-    Properties:
-      Engine: mysql
-      DBInstanceClass: db.t3.micro
-      AllocatedStorage: 20
-      DBName: mydb
-      MasterUsername: !Ref DBUsername
-      MasterUserPassword: !Ref DBPassword
-      VPCSecurityGroups:
-        - !Ref AppSecurityGroup
-      DBSubnetGroupName: !Ref DBSubnetGroup
-      PubliclyAccessible: false
-
-  # -------------------
-  # Orquestração ECS (Fargate)
+  # ECR e ECS
   # -------------------
   ECRRepository:
     Type: AWS::ECR::Repository
@@ -209,17 +94,66 @@ Resources:
       LogGroupName: /ecs/pipeline-devops
       RetentionInDays: 7
 
-  ECSTaskExecutionRole:
-    Type: AWS::IAM::Role
+  # Security Group para o Load Balancer
+  ApplicationLoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      AssumeRolePolicyDocument:
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      GroupDescription: Allow HTTP traffic to ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Security Group para o ECS Service
+  ECSServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic from ALB to ECS service
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref ApplicationLoadBalancerSecurityGroup
+
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: pipeline-devops-alb
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref ApplicationLoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: pipeline-devops-tg
+      VpcId: !Ref VPC
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
 
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -230,7 +164,7 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      ExecutionRoleArn: !Ref ECSExecutionRoleArn
       ContainerDefinitions:
         - Name: pipeline-devops-container
           Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest"
@@ -243,68 +177,6 @@ Resources:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
-
-  # Security Group para o Load Balancer do ECS (permite entrada HTTP)
-  ApplicationLoadBalancerSecurityGroupECS:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permite tráfego HTTP para o ALB do ECS
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-
-  # Security Group para o Serviço ECS (permite tráfego do ALB)
-  ECSServiceSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Permite tráfego do ALB para o serviço ECS
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref ApplicationLoadBalancerSecurityGroupECS
-
-  # Application Load Balancer para o ECS
-  ApplicationLoadBalancerECS:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: pipeline-devops-alb-ecs
-      Scheme: internet-facing
-      SecurityGroups:
-        - !Ref ApplicationLoadBalancerSecurityGroupECS
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-
-  ALBTargetGroupECS:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: pipeline-devops-tg-ecs
-      VpcId: !Ref VPC
-      Port: 80
-      Protocol: HTTP
-      TargetType: ip
-      HealthCheck:
-        Protocol: HTTP
-        Path: /
-        IntervalSeconds: 30
-        TimeoutSeconds: 5
-        HealthyThresholdCount: 2
-        UnhealthyThresholdCount: 2
-
-  ALBListenerECS:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancerECS
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroupECS
 
   ECSService:
     Type: AWS::ECS::Service
@@ -325,36 +197,16 @@ Resources:
       LoadBalancers:
         - ContainerName: pipeline-devops-container
           ContainerPort: 80
-          TargetGroupArn: !Ref ALBTargetGroupECS
-    DependsOn: ALBListenerECS
+          TargetGroupArn: !Ref ALBTargetGroup
+    DependsOn: ALBListener
 
 # -------------------
 # Outputs
 # -------------------
 Outputs:
-  LoadBalancerDNS:
-    Description: DNS do Load Balancer (EC2)
-    Value: !GetAtt LoadBalancer.DNSName
-
-  EC2InstanceId:
-    Description: ID da instância EC2
-    Value: !Ref EC2Instance
-
-  EC2PublicIP:
-    Description: IP público da instância EC2
-    Value: !GetAtt EC2Instance.PublicIp
-
-  RDSInstanceEndpoint:
-    Description: Endpoint do banco de dados RDS
-    Value: !GetAtt MyDB.Endpoint.Address
-
   VPCId:
     Description: ID da VPC criada
     Value: !Ref VPC
-
-  SecurityGroupId:
-    Description: ID do Security Group da aplicação (EC2/RDS)
-    Value: !Ref AppSecurityGroup
 
   PublicSubnet1Id:
     Description: ID da primeira Subnet pública
@@ -364,17 +216,9 @@ Outputs:
     Description: ID da segunda Subnet pública
     Value: !Ref PublicSubnet2
 
-  PrivateSubnet1Id:
-    Description: ID da primeira Subnet privada
-    Value: !Ref PrivateSubnet1
-
-  PrivateSubnet2Id:
-    Description: ID da segunda Subnet privada
-    Value: !Ref PrivateSubnet2
-
-  ECSALBDNS:
-    Description: DNS do Load Balancer para o serviço ECS
-    Value: !GetAtt ApplicationLoadBalancerECS.DNSName
+  LoadBalancerDNS:
+    Description: DNS do Application Load Balancer
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
 
   ECRRepositoryName:
     Description: Nome do repositório ECR
