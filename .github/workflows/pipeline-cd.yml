@@ -21,6 +21,13 @@ jobs:
       - name: Checkout do código
         uses: actions/checkout@v4
 
+      - name: Debug - Verificar ambiente
+        run: |
+          echo "AWS_REGION: ${{ env.AWS_REGION }}"
+          echo "ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}"
+          echo "GitHub Actor: ${{ github.actor }}"
+          echo "GitHub Repository: ${{ github.repository }}"
+
       - name: Configurar credenciais da AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -28,6 +35,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: 'no'
+
+      - name: Verificar credenciais AWS
+        run: |
+          echo "Testando credenciais AWS..."
+          aws sts get-caller-identity
+          echo "✅ Credenciais AWS válidas!"
 
       # Login no Amazon ECR
       # Autentica o Docker no seu registro ECR privado.
