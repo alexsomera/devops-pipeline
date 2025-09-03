@@ -27,12 +27,14 @@ jobs:
           echo "ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}"
           echo "GitHub Actor: ${{ github.actor }}"
           echo "GitHub Repository: ${{ github.repository }}"
+          echo "Verificando se estamos usando AWS Academy..."
 
       - name: Configurar credenciais da AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: 'no'
 
