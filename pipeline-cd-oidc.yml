@@ -1,0 +1,71 @@
+name: Pipeline CD (OIDC Version)
+
+on:
+   push:
+    branches: [ "main" ]
+   pull_request:
+    branches: [ "main" ]
+
+# Variáveis de ambiente disponíveis para todos os jobs no workflow
+env:
+  # O nome do seu repositório ECR criado com o CloudFormation
+  ECR_REPOSITORY: pipeline-devops
+  AWS_REGION: us-east-1
+
+# Required for OIDC
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-push-image:
+    name: Build e Push da Imagem para o ECR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Debug - Verificar ambiente
+        run: |
+          echo "AWS_REGION: ${{ env.AWS_REGION }}"
+          echo "ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}"
+          echo "GitHub Actor: ${{ github.actor }}"
+          echo "GitHub Repository: ${{ github.repository }}"
+
+      # OIDC Configuration (Alternative to access keys)
+      - name: Configurar credenciais da AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: 'no'
+
+      - name: Verificar credenciais AWS
+        run: |
+          echo "Testando credenciais AWS..."
+          aws sts get-caller-identity
+          echo "✅ Credenciais AWS válidas!"
+
+      # Login no Amazon ECR
+      # Autentica o Docker no seu registro ECR privado.
+      - name: Login no Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Define a tag da imagem
+      - name: Definir tag da imagem (SHA do commit)
+        id: image_tag
+        run: echo "tag=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      # Build e Push da Imagem Docker
+      - name: Build e Push da imagem para o Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfile .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "Imagem enviada com sucesso para $ECR_REGISTRY/$ECR_REPOSITORY com as tags '$IMAGE_TAG' e 'latest'"
