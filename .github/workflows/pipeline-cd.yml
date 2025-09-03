@@ -1,4 +1,4 @@
-name: Pipeline CD
+name: Pipeline CD -
 
 on:
    push:
