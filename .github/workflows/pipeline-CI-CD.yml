@@ -1,33 +1,63 @@
-name: Pipeline CD -
+name: Pipeline CI/CD
 
 on:
-   push:
+  push:
     branches: [ "main" ]
-   pull_request:
+  pull_request:
     branches: [ "main" ]
 
 # Variáveis de ambiente disponíveis para todos os jobs no workflow
 env:
-  # O nome do seu repositório ECR criado com o CloudFormation
   ECR_REPOSITORY: pipeline-devops
   AWS_REGION: us-east-1
 
 jobs:
-  build-and-push-image:
-    name: Build e Push da Imagem para o ECR
+  # Job 1: Executa testes e build local
+  test-and-build:
+    name: Testes e Build
     runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+      
+      - name: Instala o Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
 
+      - name: Instala as dependências
+        run: npm ci
+
+      - name: Executa testes automatizados
+        run: npm run test:ci
+
+      - name: Faz o build da aplicação
+        run: npm run build
+
+      - name: Cache dos artefatos de build
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-files
+          path: build/
+          retention-days: 1
+
+  # Job 2: Deploy (só executa se os testes passaram)
+  deploy:
+    name: Deploy para AWS ECR
+    runs-on: ubuntu-latest
+    needs: test-and-build  # Só executa se o job anterior passou
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # Só no push para main
+    
     steps:
       - name: Checkout do código
         uses: actions/checkout@v4
 
-      - name: Debug - Verificar ambiente
-        run: |
-          echo "AWS_REGION: ${{ env.AWS_REGION }}"
-          echo "ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}"
-          echo "GitHub Actor: ${{ github.actor }}"
-          echo "GitHub Repository: ${{ github.repository }}"
-          echo "Verificando se estamos usando AWS Academy..."
+      - name: Baixa artefatos de build
+        uses: actions/download-artifact@v3
+        with:
+          name: build-files
+          path: build/
 
       - name: Configurar credenciais da AWS
         uses: aws-actions/configure-aws-credentials@v4
@@ -38,24 +68,14 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: 'no'
 
-      - name: Verificar credenciais AWS
-        run: |
-          echo "Testando credenciais AWS..."
-          aws sts get-caller-identity
-          echo "✅ Credenciais AWS válidas!"
-
-      # Login no Amazon ECR
-      # Autentica o Docker no seu registro ECR privado.
       - name: Login no Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Define a tag da imagem
       - name: Definir tag da imagem (SHA do commit)
         id: image_tag
         run: echo "tag=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_OUTPUT
 
-      # Build e Push da Imagem Docker
       - name: Build e Push da imagem para o Amazon ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -65,5 +85,7 @@ jobs:
           docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "Imagem enviada com sucesso para $ECR_REGISTRY/$ECR_REPOSITORY com as tags '$IMAGE_TAG' e 'latest'"
+          echo "✅ Imagem enviada com sucesso para $ECR_REGISTRY/$ECR_REPOSITORY com as tags '$IMAGE_TAG' e 'latest'"
 
+      - name: Mensagem de sucesso do deploy
+        run: echo "🚀 Deploy realizado com sucesso!"
