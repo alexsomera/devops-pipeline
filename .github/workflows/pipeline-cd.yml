@@ -1,4 +1,4 @@
-name: Pipeline CD - Entrega Contínua
+name: Pipeline CD
 
 on:
    push:
