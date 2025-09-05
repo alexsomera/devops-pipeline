@@ -1,4 +1,4 @@
-name: Pipeline CI/CD - S3 Website (SIMPLES)
+name: Pipeline CI/CD - Deploy para AWS S3
 
 on:
   push:
@@ -42,7 +42,7 @@ jobs:
 
   # Job 2: Deploy (só executa se o job anterior passar)
   deploy:
-    name: Deploy para S3 Website
+    name: Deploy para AWS S3
     runs-on: ubuntu-latest
     needs: test-and-build
     
@@ -61,25 +61,25 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy para S3 Website
+      - name: Deploy para AWS S3
         run: |
           # Detectar o bucket do website automaticamente
-          WEBSITE_BUCKET=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'website')].Name" --output text)
+          BUCKET_S3=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'website')].Name" --output text)
           
-          if [ -z "$WEBSITE_BUCKET" ]; then
-            echo "❌ Bucket do website não encontrado!"
+          if [ -z "$BUCKET_S3" ]; then
+            echo "Bucket do website não encontrado!"
             exit 1
           fi
           
-          echo "🚀 Fazendo deploy para bucket: $WEBSITE_BUCKET"
+          echo "Fazendo deploy para bucket: $BUCKET_S3"
           
           # Sync dos arquivos de build para o bucket
-          aws s3 sync build/ s3://$WEBSITE_BUCKET --delete --cache-control "max-age=86400"
+          aws s3 sync build/ s3://$BUCKET_S3 --delete --cache-control "max-age=86400"
           
           # Mostrar URL do website
-          WEBSITE_URL="http://$WEBSITE_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
-          echo "✅ Website disponível em: $WEBSITE_URL"
+          URL="http://$BUCKET_S3.s3-website-$AWS_REGION.amazonaws.com"
+          echo "✅ Website disponível em: $URL"
           
           # Adicionar ao summary do GitHub
-          echo "## 🌐 Deploy Concluído!" >> $GITHUB_STEP_SUMMARY
-          echo "Website: [$WEBSITE_URL]($WEBSITE_URL)" >> $GITHUB_STEP_SUMMARY
+          echo "Deploy Concluído!" >> $GITHUB_STEP_SUMMARY
+          echo "Website: [$URL]($URL)" >> $GITHUB_STEP_SUMMARY
