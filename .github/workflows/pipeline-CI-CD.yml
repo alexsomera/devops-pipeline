@@ -9,9 +9,9 @@ env:
   AWS_REGION: us-east-1
 
 jobs:
-  # Job único: Build e Deploy direto para website
-  build-and-deploy:
-    name: Build e Deploy para S3 Website
+  # Job 1: Testes e Build
+  test-and-build:
+    name: Testes e Build da Aplicação
     runs-on: ubuntu-latest
     
     steps:
@@ -27,8 +27,31 @@ jobs:
       - name: Instala dependências
         run: npm ci
 
+      - name: Executa testes automatizados
+        run: npm run test:ci
+
       - name: Build da aplicação
         run: npm run build
+
+      - name: Upload dos artifacts de build
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-files
+          path: build/
+          retention-days: 1
+
+  # Job 2: Deploy (só executa se o job anterior passar)
+  deploy:
+    name: Deploy para S3 Website
+    runs-on: ubuntu-latest
+    needs: test-and-build
+    
+    steps:
+      - name: Download dos artifacts de build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-files
+          path: build/
 
       - name: Configurar credenciais da AWS
         uses: aws-actions/configure-aws-credentials@v4
