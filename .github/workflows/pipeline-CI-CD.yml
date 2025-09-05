@@ -8,7 +8,7 @@ on:
 
 # Variáveis de ambiente disponíveis para todos os jobs no workflow
 env:
-  ECR_REPOSITORY: pipeline-devops
+  S3_BUCKET: pipeline-artifacts-bucket
   AWS_REGION: us-east-1
 
 jobs:
@@ -41,11 +41,11 @@ jobs:
         with:
           name: build-files
           path: build/
-          retention-days: 1
+          retention-days: 7
 
-  # Job 2: Deploy (só executa se os testes passaram)
-  deploy:
-    name: Deploy para AWS ECR
+  # Job 2: Deploy dos artefatos para S3 (só executa se os testes passaram)
+  deploy-to-s3:
+    name: Deploy de Artefatos para S3
     runs-on: ubuntu-latest
     needs: test-and-build  # Só executa se o job anterior passou
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # Só no push para main
@@ -69,24 +69,106 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: 'no'
 
-      - name: Login no Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Definir tag da imagem (SHA do commit)
-        id: image_tag
-        run: echo "tag=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_OUTPUT
-
-      - name: Build e Push da imagem para o Amazon ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
+      - name: Preparar artefatos para upload
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfile .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "✅ Imagem enviada com sucesso para $ECR_REGISTRY/$ECR_REPOSITORY com as tags '$IMAGE_TAG' e 'latest'"
+          # Criar timestamp para versionamento
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          COMMIT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)
+          
+          # Criar diretório com versão
+          mkdir -p artifacts/${TIMESTAMP}-${COMMIT_SHA}
+          
+          # Comprimir artefatos de build
+          cd build
+          tar -czf ../artifacts/${TIMESTAMP}-${COMMIT_SHA}/build-${TIMESTAMP}-${COMMIT_SHA}.tar.gz .
+          cd ..
+          
+          # Criar arquivo de metadados
+          cat > artifacts/${TIMESTAMP}-${COMMIT_SHA}/metadata.json << EOF
+          {
+            "version": "${TIMESTAMP}-${COMMIT_SHA}",
+            "commit_sha": "${GITHUB_SHA}",
+            "branch": "${GITHUB_REF_NAME}",
+            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "workflow_run_id": "${GITHUB_RUN_ID}",
+            "workflow_run_number": "${GITHUB_RUN_NUMBER}"
+          }
+          EOF
+          
+          echo "ARTIFACT_VERSION=${TIMESTAMP}-${COMMIT_SHA}" >> $GITHUB_ENV
 
-      - name: Mensagem de sucesso do deploy
-        run: echo "🚀 Deploy realizado com sucesso!"
+      - name: Upload de artefatos para S3
+        run: |
+          # Upload dos artefatos versionados
+          aws s3 sync artifacts/ s3://${{ env.S3_BUCKET }}/artifacts/ \
+            --delete \
+            --metadata "commit-sha=${GITHUB_SHA},branch=${GITHUB_REF_NAME},build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          
+          # Criar link simbólico para latest
+          aws s3 cp s3://${{ env.S3_BUCKET }}/artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz \
+            s3://${{ env.S3_BUCKET }}/artifacts/latest/build-latest.tar.gz
+          
+          # Copiar metadados para latest
+          aws s3 cp s3://${{ env.S3_BUCKET }}/artifacts/${{ env.ARTIFACT_VERSION }}/metadata.json \
+            s3://${{ env.S3_BUCKET }}/artifacts/latest/metadata.json
+
+      - name: Listar artefatos no S3
+        run: |
+          echo "✅ Artefatos enviados para S3:"
+          aws s3 ls s3://${{ env.S3_BUCKET }}/artifacts/ --recursive --human-readable
+
+      - name: Publicar métricas no CloudWatch
+        run: |
+          # Métrica de deploy bem-sucedido
+          aws cloudwatch put-metric-data \
+            --namespace "Pipeline/Deployment" \
+            --metric-data MetricName=SuccessfulDeployments,Value=1,Unit=Count,Dimensions=Repository=${{ github.repository }},Branch=${{ github.ref_name }}
+          
+          # Métrica de tamanho dos artefatos
+          ARTIFACT_SIZE=$(aws s3api head-object \
+            --bucket ${{ env.S3_BUCKET }} \
+            --key artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz \
+            --query ContentLength --output text)
+          
+          aws cloudwatch put-metric-data \
+            --namespace "Pipeline/Artifacts" \
+            --metric-data MetricName=ArtifactSize,Value=$ARTIFACT_SIZE,Unit=Bytes,Dimensions=Repository=${{ github.repository }},Version=${{ env.ARTIFACT_VERSION }}
+
+      - name: Notificação de sucesso
+        run: |
+          echo "🚀 Deploy de artefatos realizado com sucesso!"
+          echo "📦 Versão: ${{ env.ARTIFACT_VERSION }}"
+          echo "🪣 Bucket S3: s3://${{ env.S3_BUCKET }}/artifacts/"
+          echo "🔗 Artefato: s3://${{ env.S3_BUCKET }}/artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz"
+
+  # Job 3: Limpeza de artefatos antigos (executa após deploy bem-sucedido)
+  cleanup-old-artifacts:
+    name: Limpeza de Artefatos Antigos
+    runs-on: ubuntu-latest
+    needs: deploy-to-s3
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Configurar credenciais da AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Remover artefatos antigos (manter últimos 10)
+        run: |
+          # Listar todas as versões ordenadas por data (mais antigas primeiro)
+          aws s3api list-objects-v2 \
+            --bucket ${{ env.S3_BUCKET }} \
+            --prefix "artifacts/" \
+            --query 'sort_by(Contents, &LastModified)[:-10].[Key]' \
+            --output text | grep -v "latest/" | while read key; do
+            if [ ! -z "$key" ] && [ "$key" != "None" ]; then
+              echo "Removendo artefato antigo: $key"
+              aws s3 rm s3://${{ env.S3_BUCKET }}/$key
+            fi
+          done
+          
+          echo "✅ Limpeza de artefatos antigos concluída"
