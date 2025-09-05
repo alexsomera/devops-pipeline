@@ -1,20 +1,17 @@
-name: Pipeline CI/CD - S3 Artifacts
+name: Pipeline CI/CD - S3 Website (SIMPLES)
 
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
-# Variáveis de ambiente disponíveis para todos os jobs no workflow
+# Variáveis de ambiente para o workflow
 env:
-  S3_BUCKET: pipeline-devops-artifacts-bucket-prod-218596482633
   AWS_REGION: us-east-1
 
 jobs:
-  # Job 1: Executa testes e build local
-  test-and-build:
-    name: Testes e Build
+  # Job único: Build e Deploy direto para website
+  build-and-deploy:
+    name: Build e Deploy para S3 Website
     runs-on: ubuntu-latest
     
     steps:
@@ -27,139 +24,12 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Instala as dependências
+      - name: Instala dependências
         run: npm ci
 
-      - name: Executa testes automatizados
-        run: npm run test:ci
-
-      - name: Faz o build da aplicação
+      - name: Build da aplicação
         run: npm run build
 
-      - name: Cache dos artefatos de build
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-files
-          path: build/
-          retention-days: 7
-
-  # Job 2: Deploy dos artefatos para S3 (só executa se os testes passaram)
-  deploy-to-s3:
-    name: Deploy de Artefatos para S3
-    runs-on: ubuntu-latest
-    needs: test-and-build  # Só executa se o job anterior passou
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # Só no push para main
-    
-    steps:
-      - name: Checkout do código
-        uses: actions/checkout@v4
-
-      - name: Baixa artefatos de build
-        uses: actions/download-artifact@v4
-        with:
-          name: build-files
-          path: build/
-
-      - name: Configurar credenciais da AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
-          mask-aws-account-id: 'no'
-
-      - name: Preparar artefatos para upload
-        run: |
-          # Criar timestamp para versionamento
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          COMMIT_SHA=$(echo ${GITHUB_SHA} | cut -c1-7)
-          
-          # Criar diretório com versão
-          mkdir -p artifacts/${TIMESTAMP}-${COMMIT_SHA}
-          
-          # Comprimir artefatos de build
-          cd build
-          tar -czf ../artifacts/${TIMESTAMP}-${COMMIT_SHA}/build-${TIMESTAMP}-${COMMIT_SHA}.tar.gz .
-          cd ..
-          
-          # Criar arquivo de metadados
-          cat > artifacts/${TIMESTAMP}-${COMMIT_SHA}/metadata.json << EOF
-          {
-            "version": "${TIMESTAMP}-${COMMIT_SHA}",
-            "commit_sha": "${GITHUB_SHA}",
-            "branch": "${GITHUB_REF_NAME}",
-            "build_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "workflow_run_id": "${GITHUB_RUN_ID}",
-            "workflow_run_number": "${GITHUB_RUN_NUMBER}"
-          }
-          EOF
-          
-          echo "ARTIFACT_VERSION=${TIMESTAMP}-${COMMIT_SHA}" >> $GITHUB_ENV
-
-      - name: Upload de artefatos para S3
-        run: |
-          # Upload dos artefatos versionados
-          aws s3 sync artifacts/ s3://${{ env.S3_BUCKET }}/artifacts/ \
-            --metadata "commit-sha=${GITHUB_SHA},branch=${GITHUB_REF_NAME},build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          
-          # Criar link simbólico para latest
-          aws s3 cp s3://${{ env.S3_BUCKET }}/artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz \
-            s3://${{ env.S3_BUCKET }}/artifacts/latest/build-latest.tar.gz
-          
-          # Copiar metadados para latest
-          aws s3 cp s3://${{ env.S3_BUCKET }}/artifacts/${{ env.ARTIFACT_VERSION }}/metadata.json \
-            s3://${{ env.S3_BUCKET }}/artifacts/latest/metadata.json
-
-      - name: Listar artefatos no S3
-        run: |
-          echo "✅ Artefatos enviados para S3:"
-          aws s3 ls s3://${{ env.S3_BUCKET }}/artifacts/ --recursive --human-readable
-
-      - name: Publicar métricas no CloudWatch
-        run: |
-          # Métrica de deploy bem-sucedido
-          aws cloudwatch put-metric-data \
-            --namespace "Pipeline/Deployment" \
-            --metric-name "SuccessfulDeployments" \
-            --value 1 \
-            --unit Count \
-            --dimensions Repository=${{ github.repository }},Branch=${{ github.ref_name }}
-          
-          # Métrica de tamanho dos artefatos
-          ARTIFACT_SIZE=$(aws s3api head-object \
-            --bucket ${{ env.S3_BUCKET }} \
-            --key artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz \
-            --query ContentLength --output text 2>/dev/null || echo "0")
-          
-          if [ "$ARTIFACT_SIZE" != "0" ] && [ ! -z "$ARTIFACT_SIZE" ]; then
-            aws cloudwatch put-metric-data \
-              --namespace "Pipeline/Artifacts" \
-              --metric-name "ArtifactSize" \
-              --value $ARTIFACT_SIZE \
-              --unit Bytes \
-              --dimensions Repository=${{ github.repository }},Version=${{ env.ARTIFACT_VERSION }}
-            
-            echo "📊 Métrica de tamanho enviada: $ARTIFACT_SIZE bytes"
-          else
-            echo "⚠️ Não foi possível obter o tamanho do artefato"
-          fi
-
-      - name: Notificação de sucesso
-        run: |
-          echo "🚀 Deploy de artefatos realizado com sucesso!"
-          echo "📦 Versão: ${{ env.ARTIFACT_VERSION }}"
-          echo "🪣 Bucket S3: s3://${{ env.S3_BUCKET }}/artifacts/"
-          echo "🔗 Artefato: s3://${{ env.S3_BUCKET }}/artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz"
-
-  # Job 3: Limpeza de artefatos antigos (executa após deploy bem-sucedido)
-  cleanup-old-artifacts:
-    name: Limpeza de Artefatos Antigos
-    runs-on: ubuntu-latest
-    needs: deploy-to-s3
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
-    steps:
       - name: Configurar credenciais da AWS
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -168,28 +38,25 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Remover artefatos antigos (manter últimos 10)
+      - name: Deploy para S3 Website
         run: |
-          # Listar e remover artefatos antigos - versão simplificada para AWS Academy
-          echo "🧹 Iniciando limpeza de artefatos antigos..."
+          # Detectar o bucket do website automaticamente
+          WEBSITE_BUCKET=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'website')].Name" --output text)
           
-          # Listar objetos por data de modificação e manter apenas os 10 mais recentes
-          aws s3api list-objects-v2 \
-            --bucket ${{ env.S3_BUCKET }} \
-            --prefix "artifacts/" \
-            --query 'sort_by(Contents, &LastModified)[:-10].[Key]' \
-            --output text > old_artifacts.txt 2>/dev/null || true
-          
-          # Remover artefatos antigos se existirem
-          if [ -s old_artifacts.txt ]; then
-            cat old_artifacts.txt | grep -v "latest/" | head -20 | while read key; do
-              if [ ! -z "$key" ] && [ "$key" != "None" ]; then
-                echo "Removendo artefato antigo: $key"
-                aws s3 rm s3://${{ env.S3_BUCKET }}/$key || echo "Falha ao remover $key (continuando...)"
-              fi
-            done
-          else
-            echo "Nenhum artefato antigo para remover"
+          if [ -z "$WEBSITE_BUCKET" ]; then
+            echo "❌ Bucket do website não encontrado!"
+            exit 1
           fi
           
-          echo "✅ Limpeza de artefatos antigos concluída"
+          echo "🚀 Fazendo deploy para bucket: $WEBSITE_BUCKET"
+          
+          # Sync dos arquivos de build para o bucket
+          aws s3 sync build/ s3://$WEBSITE_BUCKET --delete --cache-control "max-age=86400"
+          
+          # Mostrar URL do website
+          WEBSITE_URL="http://$WEBSITE_BUCKET.s3-website-$AWS_REGION.amazonaws.com"
+          echo "✅ Website disponível em: $WEBSITE_URL"
+          
+          # Adicionar ao summary do GitHub
+          echo "## 🌐 Deploy Concluído!" >> $GITHUB_STEP_SUMMARY
+          echo "Website: [$WEBSITE_URL]($WEBSITE_URL)" >> $GITHUB_STEP_SUMMARY
