@@ -1,4 +1,4 @@
-name: Pipeline CI/CD
+name: Pipeline CI/CD - S3 Artifacts
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 # Variáveis de ambiente disponíveis para todos os jobs no workflow
 env:
-  S3_BUCKET: pipeline-artifacts-bucket
+  S3_BUCKET: pipeline-devops-artifacts-bucket-prod-218596482633
   AWS_REGION: us-east-1
 
 jobs:
@@ -101,7 +101,6 @@ jobs:
         run: |
           # Upload dos artefatos versionados
           aws s3 sync artifacts/ s3://${{ env.S3_BUCKET }}/artifacts/ \
-            --delete \
             --metadata "commit-sha=${GITHUB_SHA},branch=${GITHUB_REF_NAME},build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           
           # Criar link simbólico para latest
@@ -159,16 +158,26 @@ jobs:
 
       - name: Remover artefatos antigos (manter últimos 10)
         run: |
-          # Listar todas as versões ordenadas por data (mais antigas primeiro)
+          # Listar e remover artefatos antigos - versão simplificada para AWS Academy
+          echo "🧹 Iniciando limpeza de artefatos antigos..."
+          
+          # Listar objetos por data de modificação e manter apenas os 10 mais recentes
           aws s3api list-objects-v2 \
             --bucket ${{ env.S3_BUCKET }} \
             --prefix "artifacts/" \
             --query 'sort_by(Contents, &LastModified)[:-10].[Key]' \
-            --output text | grep -v "latest/" | while read key; do
-            if [ ! -z "$key" ] && [ "$key" != "None" ]; then
-              echo "Removendo artefato antigo: $key"
-              aws s3 rm s3://${{ env.S3_BUCKET }}/$key
-            fi
-          done
+            --output text > old_artifacts.txt 2>/dev/null || true
+          
+          # Remover artefatos antigos se existirem
+          if [ -s old_artifacts.txt ]; then
+            cat old_artifacts.txt | grep -v "latest/" | head -20 | while read key; do
+              if [ ! -z "$key" ] && [ "$key" != "None" ]; then
+                echo "Removendo artefato antigo: $key"
+                aws s3 rm s3://${{ env.S3_BUCKET }}/$key || echo "Falha ao remover $key (continuando...)"
+              fi
+            done
+          else
+            echo "Nenhum artefato antigo para remover"
+          fi
           
           echo "✅ Limpeza de artefatos antigos concluída"
