@@ -121,17 +121,29 @@ jobs:
           # Métrica de deploy bem-sucedido
           aws cloudwatch put-metric-data \
             --namespace "Pipeline/Deployment" \
-            --metric-data MetricName=SuccessfulDeployments,Value=1,Unit=Count,Dimensions=Repository=${{ github.repository }},Branch=${{ github.ref_name }}
+            --metric-name "SuccessfulDeployments" \
+            --value 1 \
+            --unit Count \
+            --dimensions Repository=${{ github.repository }},Branch=${{ github.ref_name }}
           
           # Métrica de tamanho dos artefatos
           ARTIFACT_SIZE=$(aws s3api head-object \
             --bucket ${{ env.S3_BUCKET }} \
             --key artifacts/${{ env.ARTIFACT_VERSION }}/build-${{ env.ARTIFACT_VERSION }}.tar.gz \
-            --query ContentLength --output text)
+            --query ContentLength --output text 2>/dev/null || echo "0")
           
-          aws cloudwatch put-metric-data \
-            --namespace "Pipeline/Artifacts" \
-            --metric-data MetricName=ArtifactSize,Value=$ARTIFACT_SIZE,Unit=Bytes,Dimensions=Repository=${{ github.repository }},Version=${{ env.ARTIFACT_VERSION }}
+          if [ "$ARTIFACT_SIZE" != "0" ] && [ ! -z "$ARTIFACT_SIZE" ]; then
+            aws cloudwatch put-metric-data \
+              --namespace "Pipeline/Artifacts" \
+              --metric-name "ArtifactSize" \
+              --value $ARTIFACT_SIZE \
+              --unit Bytes \
+              --dimensions Repository=${{ github.repository }},Version=${{ env.ARTIFACT_VERSION }}
+            
+            echo "📊 Métrica de tamanho enviada: $ARTIFACT_SIZE bytes"
+          else
+            echo "⚠️ Não foi possível obter o tamanho do artefato"
+          fi
 
       - name: Notificação de sucesso
         run: |
