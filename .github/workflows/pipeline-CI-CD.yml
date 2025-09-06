@@ -103,10 +103,10 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          🐳 **Build Docker:** Imagem criada com sucesso (tag: ${{ env.IMAGE_TAG }})
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          🐳 **Build Docker:** Imagem criada com sucesso (tag: ${IMAGE_TAG})
           
-          📤 **Push ECR:** Imagem enviada para ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
+          📤 **Push ECR:** Imagem enviada para ${ECR_REGISTRY}/${ECR_REPOSITORY}
           
           EOF
 
@@ -125,8 +125,8 @@ jobs:
         env:
           IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          🔍 **Scan de Segurança:** Análise de vulnerabilidades iniciada (tag: ${{ env.IMAGE_TAG }})
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          🔍 **Scan de Segurança:** Análise de vulnerabilidades iniciada (tag: ${IMAGE_TAG})
           
           EOF
 
