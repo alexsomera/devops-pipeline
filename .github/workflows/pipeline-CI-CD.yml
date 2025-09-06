@@ -1,17 +1,20 @@
-name: Pipeline CI/CD - Deploy para AWS S3
+name: Pipeline CI/CD
 
 on:
   push:
     branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
-# Variáveis de ambiente para o workflow
+# Variáveis de ambiente disponíveis para todos os jobs no workflow
 env:
+  ECR_REPOSITORY: pipeline-devops
   AWS_REGION: us-east-1
 
 jobs:
-  # Job 1: Testes e Build
+  # Job 1: Executa testes e build local
   test-and-build:
-    name: Testes e Build da Aplicação
+    name: Testes e Build
     runs-on: ubuntu-latest
     
     steps:
@@ -24,30 +27,37 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Instala dependências
+      - name: Instala as dependências
         run: npm ci
 
       - name: Executa testes automatizados
         run: npm run test:ci
 
-      - name: Build da aplicação
+      - name: Análise de segurança de dependências
+        run: npm audit --audit-level moderate
+
+      - name: Faz o build da aplicação
         run: npm run build
 
-      - name: Upload dos artefatos de build
+      - name: Cache dos artefatos de build
         uses: actions/upload-artifact@v4
         with:
           name: build-files
           path: build/
           retention-days: 1
 
-  # Job 2: Deploy (só executa se o job anterior passar)
+  # Job 2: Deploy (só executa se os testes passaram)
   deploy:
-    name: Deploy para S3
+    name: Deploy para AWS ECR
     runs-on: ubuntu-latest
-    needs: test-and-build
+    needs: test-and-build  # Só executa se o job anterior passou
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'  # Só no push para main
     
     steps:
-      - name: Download dos artefatos de build
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Baixa artefatos de build
         uses: actions/download-artifact@v4
         with:
           name: build-files
@@ -60,26 +70,37 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: 'no'
 
-      - name: Deploy para AWS S3
+      - name: Login no Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Definir tag da imagem (SHA do commit)
+        id: image_tag
+        run: echo "tag=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Build e Push da imagem para o Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
-          # Detectar o bucket do website automaticamente
-          BUCKET_S3=$(aws s3api list-buckets --query "Buckets[?contains(Name, 'website')].Name" --output text)
-          
-          if [ -z "$BUCKET_S3" ]; then
-            echo "Bucket do website não encontrado!"
-            exit 1
-          fi
-          
-          echo "Fazendo deploy para bucket: $BUCKET_S3"
-          
-          # Sync dos arquivos de build para o bucket
-          aws s3 sync build/ s3://$BUCKET_S3 --delete --cache-control "max-age=86400"
-          
-          # Mostrar URL do website
-          URL="http://$BUCKET_S3.s3-website-$AWS_REGION.amazonaws.com"
-          echo "✅ Website disponível em: $URL"
-          
-          # Adicionar ao summary do GitHub
-          echo "Deploy Concluído!" >> $GITHUB_STEP_SUMMARY
-          echo "Website: [$URL]($URL)" >> $GITHUB_STEP_SUMMARY
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f Dockerfile .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "✅ Imagem enviada com sucesso para $ECR_REGISTRY/$ECR_REPOSITORY com as tags '$IMAGE_TAG' e 'latest'"
+
+      - name: Scan de segurança da imagem Docker
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
+        run: |
+          # Aguarda um pouco para o ECR processar a imagem
+          sleep 30
+          # Executa scan de vulnerabilidades
+          aws ecr start-image-scan --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG || true
+          echo "🔍 Scan de segurança iniciado para a imagem"
+
+      - name: Mensagem de sucesso do deploy
+        run: echo "🚀 Deploy realizado com sucesso!"
