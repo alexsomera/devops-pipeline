@@ -102,5 +102,31 @@ jobs:
           aws ecr start-image-scan --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG || true
           echo "🔍 Scan de segurança iniciado para a imagem"
 
+      - name: Obter URL da aplicação
+        id: get-app-url
+        run: |
+          APP_URL=$(aws elbv2 describe-load-balancers \
+            --names pipeline-devops-github-alb \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || echo "URL não disponível")
+          
+          if [ "$APP_URL" != "URL não disponível" ] && [ "$APP_URL" != "None" ]; then
+            APP_URL="http://$APP_URL"
+          fi
+          
+          echo "app-url=$APP_URL" >> $GITHUB_OUTPUT
+
+      - name: Criar Job Summary com URL da aplicação
+        env:
+          APP_URL: ${{ steps.get-app-url.outputs.app-url }}
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          # 🔗 [Acessar Aplicação](${{ env.APP_URL }})
+          EOF
+
       - name: Mensagem de sucesso do deploy
-        run: echo "🚀 Deploy realizado com sucesso!"
+        env:
+          APP_URL: ${{ steps.get-app-url.outputs.app-url }}
+        run: |
+          echo "🚀 Deploy realizado com sucesso!"
+          echo "📱 URL da aplicação: $APP_URL"
