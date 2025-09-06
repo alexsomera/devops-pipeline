@@ -105,13 +105,15 @@ jobs:
       - name: Obter URL da aplicação
         id: get-app-url
         run: |
-          APP_URL=$(aws elbv2 describe-load-balancers \
-            --names pipeline-devops-github-alb \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text 2>/dev/null || echo "URL não disponível")
+          # Buscar ALB pelo padrão de nome da infraestrutura
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --query 'LoadBalancers[?contains(LoadBalancerName, `pipeline`) && contains(LoadBalancerName, `alb`)].DNSName' \
+            --output text --region ${{ env.AWS_REGION }} | head -n1)
           
-          if [ "$APP_URL" != "URL não disponível" ] && [ "$APP_URL" != "None" ]; then
-            APP_URL="http://$APP_URL"
+          if [ -n "$ALB_DNS" ] && [ "$ALB_DNS" != "None" ]; then
+            APP_URL="http://$ALB_DNS"
+          else
+            APP_URL="Deploy concluído - ALB não encontrado"
           fi
           
           echo "app-url=$APP_URL" >> $GITHUB_OUTPUT
