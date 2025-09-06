@@ -7,15 +7,15 @@ describe('Integration Tests', () => {
     
     // Verifica se componentes principais estão renderizados
     await waitFor(() => {
-      expect(screen.getByText(/Gerenciador de Carros/i)).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Hot Wheels/i })).toBeInTheDocument();
     });
     
     // Verifica se a navegação funciona
     const homeLink = screen.getByText(/Home/i);
     expect(homeLink).toBeInTheDocument();
     
-    const aboutLink = screen.getByText(/Sobre/i);
-    expect(aboutLink).toBeInTheDocument();
+    const aboutLinks = screen.getAllByText(/Sobre/i);
+    expect(aboutLinks.length).toBeGreaterThan(0);
   });
 
   test('health check endpoint está disponível', async () => {
@@ -44,6 +44,6 @@ describe('Integration Tests', () => {
     
     // Verifica se o roteamento SPA funciona
     expect(document.title).toBeDefined();
-    expect(document.querySelector('.App')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Hot Wheels/i })).toBeInTheDocument();
   });
 });
