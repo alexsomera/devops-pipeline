@@ -60,7 +60,7 @@ Resources:
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: pipeline-complete-alb
+      Name: pipeline-devops-alb
       Scheme: internet-facing
       SecurityGroups:
         - !Ref ALBSecurityGroup
@@ -71,16 +71,19 @@ Resources:
   ALBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: pipeline-complete-tg
+      Name: pipeline-devops-tg
       VpcId: vpc-082fdc4058bab5da5  # VPC default
       Port: 80
       Protocol: HTTP
       TargetType: ip
-      HealthCheckPath: /
+      HealthCheckPath: /health.json  # Health check mais específico
+      HealthCheckProtocol: HTTP
       HealthCheckIntervalSeconds: 30
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: 200
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -96,18 +99,21 @@ Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: pipeline-complete
+      ClusterName: pipeline-devops
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled  # Habilita Container Insights para monitoramento avançado
 
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/pipeline-complete
-      RetentionInDays: 3
+      LogGroupName: /ecs/pipeline-devops
+      RetentionInDays: 7  # Aumentado de 3 para 7 dias
 
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: pipeline-complete-task
+      Family: pipeline-devops-task
       Cpu: "256"
       Memory: "512"
       NetworkMode: awsvpc
@@ -119,17 +125,34 @@ Resources:
           Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest"
           PortMappings:
             - ContainerPort: 80
+              Protocol: tcp
+          # Configurações de saúde do container
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - "curl -f http://localhost/health.json || exit 1"
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          # Variáveis de ambiente para logging
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: LOG_LEVEL
+              Value: info
           LogConfiguration:
             LogDriver: awslogs
             Options:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
+              awslogs-datetime-format: "%Y-%m-%d %H:%M:%S"
 
   ECSService:
     Type: AWS::ECS::Service
     Properties:
-      ServiceName: pipeline-complete-service
+      ServiceName: pipeline-devops-service
       Cluster: !Ref ECSCluster
       TaskDefinition: !Ref ECSTaskDefinition
       LaunchType: FARGATE
@@ -147,6 +170,169 @@ Resources:
           ContainerPort: 80
           TargetGroupArn: !Ref ALBTargetGroup
     DependsOn: ALBListener
+
+  # -------------------
+  # Monitoramento e Alertas
+  # -------------------
+  
+  # CloudWatch Dashboard para monitoramento
+  MonitoringDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: pipeline-devops-monitoring
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ECS", "CPUUtilization", "ServiceName", "${ECSService}", "ClusterName", "${ECSCluster}" ],
+                  [ ".", "MemoryUtilization", ".", ".", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "ECS Service - CPU & Memory",
+                "yAxis": {
+                  "left": {
+                    "min": 0,
+                    "max": 100
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${ApplicationLoadBalancer}" ],
+                  [ ".", "TargetResponseTime", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Load Balancer - Requests & Response Time"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", "${ALBTargetGroup}", "LoadBalancer", "${ApplicationLoadBalancer}" ],
+                  [ ".", "UnHealthyHostCount", ".", ".", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Target Group Health"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 18,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '${LogGroup}'\n| fields @timestamp, @message\n| sort @timestamp desc\n| limit 100",
+                "region": "${AWS::Region}",
+                "title": "Application Logs (Last 100)",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+  # Alarme para alta utilização de CPU
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-cpu"
+      AlarmDescription: "Alarme quando CPU do ECS > 80%"
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !Ref ECSService
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      TreatMissingData: notBreaching
+
+  # Alarme para alta utilização de memória
+  HighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-memory"
+      AlarmDescription: "Alarme quando Memória do ECS > 85%"
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !Ref ECSService
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+      TreatMissingData: notBreaching
+
+  # Alarme para hosts não saudáveis
+  UnhealthyHostsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-unhealthy-hosts"
+      AlarmDescription: "Alarme quando há hosts não saudáveis no Target Group"
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: TargetGroup
+          Value: !GetAtt ALBTargetGroup.TargetGroupFullName
+        - Name: LoadBalancer
+          Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
+
+  # Alarme para alta latência
+  HighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-high-latency"
+      AlarmDescription: "Alarme quando tempo de resposta > 2 segundos"
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+      TreatMissingData: notBreaching
 
 Outputs:
   LoadBalancerDNS:
@@ -169,3 +355,21 @@ Outputs:
     Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}"
     Export:
       Name: !Sub "${AWS::StackName}-ECRRepositoryURI"
+
+  MonitoringDashboardURL:
+    Description: URL do Dashboard de Monitoramento CloudWatch
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${MonitoringDashboard}"
+
+  HealthCheckURL:
+    Description: URL do Health Check da aplicação
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}/health.json"
+
+  LogGroupName:
+    Description: Nome do CloudWatch Log Group
+    Value: !Ref LogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-LogGroupName"
+
+  CloudWatchLogsURL:
+    Description: URL para visualizar logs no CloudWatch
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/${LogGroup}"
