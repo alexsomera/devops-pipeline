@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import App from '../App';
+import { vi } from 'vitest';
+import App from '../App.jsx';
 
 describe('Integration Tests', () => {
   test('aplicação carrega completamente', async () => {
@@ -20,7 +21,7 @@ describe('Integration Tests', () => {
 
   test('health check endpoint está disponível', async () => {
     // Simula chamada para endpoint de health
-    global.fetch = jest.fn(() =>
+    global.fetch = vi.fn(() =>
       Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
