@@ -130,6 +130,35 @@ jobs:
           
           EOF
 
+      - name: Forçar redeploy do ECS Service
+        env:
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
+        run: |
+          # Força nova deployment do ECS Service
+          aws ecs update-service \
+            --cluster pipeline-devops \
+            --service pipeline-devops-service \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "🔄 Redeploy do ECS Service forçado"
+          
+          # Aguarda o deployment estabilizar
+          echo "⏳ Aguardando deployment estabilizar..."
+          aws ecs wait services-stable \
+            --cluster pipeline-devops \
+            --services pipeline-devops-service \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Deployment estabilizado"
+
+      - name: Registrar sucesso do redeploy
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          🔄 **Redeploy ECS:** Serviço atualizado com nova imagem
+          
+          EOF
+
       - name: Mensagem de sucesso do deploy
         run: |
           # Obter URL da aplicação
