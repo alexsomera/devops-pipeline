@@ -1,15 +1,38 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Infraestrutura completa - ECS + ALB
+Description: Infraestrutura para Deploy AWS - ECS + ALB
 
 Parameters:
   ECSExecutionRoleArn:
     Type: String
     Default: "arn:aws:iam::218596482633:role/LabRole"
+  
+  NotificationEmail:
+    Type: String
+    Description: "E-mail para receber notificações de alarmes"
+    AllowedPattern: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    ConstraintDescription: "Deve ser um endereço de e-mail válido (exemplo: nome@email.com)"
+    Default: "alexsomera@gmail.com"
 
 Resources:
+  # SNS Topic para notificações de alarmes
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-alerts"
+      DisplayName: "Pipeline DevOps - Alertas"
+
+  # Subscription para e-mail
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      TopicArn: !Ref AlertTopic
+      Endpoint: !Ref NotificationEmail
+
   # ECR Repository
   ECRRepository:
     Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
     Properties:
       RepositoryName: pipeline-devops
       ImageTagMutability: MUTABLE
@@ -108,7 +131,7 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /ecs/pipeline-devops
-      RetentionInDays: 7  # Aumentado de 3 para 7 dias
+      RetentionInDays: 7 # Retém logs por 7 dias
 
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -118,7 +141,7 @@ Resources:
       Memory: "512"
       NetworkMode: awsvpc
       RequiresCompatibilities:
-        - FARGATE
+        - FARGATE # Usando Fargate para simplificar gerenciamento
       ExecutionRoleArn: !Ref ECSExecutionRoleArn
       ContainerDefinitions:
         - Name: app-container
@@ -269,6 +292,10 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 80
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
       Dimensions:
         - Name: ServiceName
           Value: !Ref ECSService
@@ -289,6 +316,10 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 85
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
       Dimensions:
         - Name: ServiceName
           Value: !Ref ECSService
@@ -309,6 +340,10 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
       Dimensions:
         - Name: TargetGroup
           Value: !GetAtt ALBTargetGroup.TargetGroupFullName
@@ -329,6 +364,10 @@ Resources:
       EvaluationPeriods: 2
       Threshold: 2
       ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+      OKActions:
+        - !Ref AlertTopic
       Dimensions:
         - Name: LoadBalancer
           Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
@@ -373,3 +412,13 @@ Outputs:
   CloudWatchLogsURL:
     Description: URL para visualizar logs no CloudWatch
     Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#logsV2:log-groups/log-group/${LogGroup}"
+
+  AlertTopicArn:
+    Description: ARN do tópico SNS para notificações de alarmes
+    Value: !Ref AlertTopic
+    Export:
+      Name: !Sub "${AWS::StackName}-AlertTopicArn"
+
+  NotificationEmail:
+    Description: E-mail configurado para receber notificações
+    Value: !Ref NotificationEmail

@@ -46,6 +46,13 @@ jobs:
           path: build/
           retention-days: 1
 
+      - name: Registrar sucesso dos testes
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          ✅ **Testes automatizados:** Todos os testes passaram com sucesso
+          
+          EOF
+
   # Job 2: Deploy (só executa se os testes passaram)
   deploy:
     name: Deploy para AWS ECR
@@ -91,6 +98,18 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "✅ Imagem enviada com sucesso para $ECR_REGISTRY/$ECR_REPOSITORY com as tags '$IMAGE_TAG' e 'latest'"
 
+      - name: Registrar sucesso do build Docker
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          🐳 **Build Docker:** Imagem criada com sucesso (tag: ${{ env.IMAGE_TAG }})
+          
+          📤 **Push ECR:** Imagem enviada para ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
+          
+          EOF
+
       - name: Scan de segurança da imagem Docker
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -102,10 +121,18 @@ jobs:
           aws ecr start-image-scan --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG || true
           echo "🔍 Scan de segurança iniciado para a imagem"
 
-      - name: Obter URL da aplicação
-        id: get-app-url
+      - name: Registrar sucesso do scan de segurança
+        env:
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
-          # Buscar ALB pelo padrão de nome da infraestrutura
+          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
+          🔍 **Scan de Segurança:** Análise de vulnerabilidades iniciada (tag: ${{ env.IMAGE_TAG }})
+          
+          EOF
+
+      - name: Mensagem de sucesso do deploy
+        run: |
+          # Obter URL da aplicação
           ALB_DNS=$(aws elbv2 describe-load-balancers \
             --query 'LoadBalancers[?contains(LoadBalancerName, `pipeline`) && contains(LoadBalancerName, `alb`)].DNSName' \
             --output text --region ${{ env.AWS_REGION }} | head -n1)
@@ -116,19 +143,12 @@ jobs:
             APP_URL="Deploy concluído - ALB não encontrado"
           fi
           
-          echo "app-url=$APP_URL" >> $GITHUB_OUTPUT
-
-      - name: Criar Job Summary com URL da aplicação
-        env:
-          APP_URL: ${{ steps.get-app-url.outputs.app-url }}
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          # 🔗 [Acessar Aplicação](${{ env.APP_URL }})
+          # Criar Job Summary com URL da aplicação
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          
+          🔗 **Acessar Aplicação:** [$APP_URL]($APP_URL)
           EOF
-
-      - name: Mensagem de sucesso do deploy
-        env:
-          APP_URL: ${{ steps.get-app-url.outputs.app-url }}
-        run: |
+          
+          # Mensagens de sucesso do deploy
           echo "🚀 Deploy realizado com sucesso!"
           echo "📱 URL da aplicação: $APP_URL"
