@@ -9,7 +9,7 @@ const Home = () => {
 
       <h1>Hot Wheels</h1>
       <p>Bem-vindo ao CRUD Hot Wheels</p>
-      <img src={process.env.PUBLIC_URL + 'home.png'} alt="Hot Wheels" className="img-fluid mb-3" />
+      <img src="/home.png" alt="Hot Wheels" className="img-fluid mb-3" />
       <br />
       <Anchor href="/cars" className="btn btn-warning m-2">
         Ver carros
