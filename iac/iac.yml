@@ -1,238 +1,110 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Description: Infraestrutura AWS simplificada - ECS Fargate
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Infraestrutura AWS'
 
 Parameters:
-  ECSExecutionRoleArn:
+  ProjectName:
     Type: String
-    Default: "arn:aws:iam::218596482633:role/LabRole"
-    Description: ARN of the ECS Task Execution Role
+    Default: 'pipeline-devops'
+    Description: 'Nome do projeto'
+  
+  Environment:
+    Type: String
+    Default: 'prod'
+    Description: 'Ambiente de deploy'
+
+  NotificationEmail:
+    Type: String
+    Description: 'Email para receber alertas de monitoramento'
+    AllowedPattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
 
 Resources:
-  # -------------------
-  # Rede
-  # -------------------
-  VPC:
-    Type: AWS::EC2::VPC
+  # ===== BUCKET PARA O SITE =====
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
     Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: DevOpsVPC
+      BucketName: !Sub '${ProjectName}-website-${Environment}-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
 
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-
-  AttachGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
+  # Política do bucket para acesso público de leitura
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: WebsiteBucket
     Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${WebsiteBucket}/*'
 
-  # Subnets Públicas
-  PublicSubnet1:
-    Type: AWS::EC2::Subnet
+  # ===== MONITORAMENTO SIMPLES =====
+  # SNS Topic para alertas
+  AlertsTopic:
+    Type: AWS::SNS::Topic
     Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs ""]
-      MapPublicIpOnLaunch: true
+      TopicName: !Sub '${ProjectName}-alerts-${Environment}'
+      DisplayName: 'Alertas Simples de Monitoramento'
 
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet
+  AlertsSubscription:
+    Type: AWS::SNS::Subscription
     Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [1, !GetAZs ""]
-      MapPublicIpOnLaunch: true
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
 
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
+  # Alarme de CPU > 70%
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
     Properties:
-      VpcId: !Ref VPC
+      AlarmName: !Sub '${ProjectName}-high-cpu-${Environment}'
+      AlarmDescription: 'Alarme quando CPU excede 70%'
+      MetricName: 'CPUUtilization'
+      Namespace: 'AWS/EC2'
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
 
-  PublicRoute:
-    Type: AWS::EC2::Route
-    DependsOn: AttachGateway
+  # Alarme de Memória > 70%
+  HighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
     Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
+      AlarmName: !Sub '${ProjectName}-high-memory-${Environment}'
+      AlarmDescription: 'Alarme quando Memória excede 70%'
+      MetricName: 'MemoryUtilization'
+      Namespace: 'CWAgent'
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+      TreatMissingData: notBreaching
 
-  PublicSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet1
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
-  # -------------------
-  # ECR e ECS
-  # -------------------
-  ECRRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: pipeline-devops
-      ImageTagMutability: MUTABLE
-      ImageScanningConfiguration:
-        ScanOnPush: true
-
-  ECSCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: pipeline-devops-cluster
-
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /ecs/pipeline-devops
-      RetentionInDays: 7
-
-  # Security Group para o Load Balancer
-  ApplicationLoadBalancerSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTP traffic to ALB
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-
-  # Security Group para o ECS Service
-  ECSServiceSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow traffic from ALB to ECS service
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref ApplicationLoadBalancerSecurityGroup
-
-  # Application Load Balancer
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: pipeline-devops-alb
-      Scheme: internet-facing
-      SecurityGroups:
-        - !Ref ApplicationLoadBalancerSecurityGroup
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-
-  ALBTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: pipeline-devops-tg
-      VpcId: !Ref VPC
-      Port: 80
-      Protocol: HTTP
-      TargetType: ip
-      HealthCheckProtocol: HTTP
-      HealthCheckPath: /
-      HealthCheckIntervalSeconds: 30
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 2
-
-  ALBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: 80
-      Protocol: HTTP
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref ALBTargetGroup
-
-  ECSTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: pipeline-devops-task
-      Cpu: "256"
-      Memory: "512"
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: !Ref ECSExecutionRoleArn
-      ContainerDefinitions:
-        - Name: pipeline-devops-container
-          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest"
-          PortMappings:
-            - ContainerPort: 80
-              Protocol: tcp
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
-
-  ECSService:
-    Type: AWS::ECS::Service
-    Properties:
-      ServiceName: pipeline-devops-service
-      Cluster: !Ref ECSCluster
-      TaskDefinition: !Ref ECSTaskDefinition
-      LaunchType: FARGATE
-      DesiredCount: 1
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          SecurityGroups:
-            - !Ref ECSServiceSecurityGroup
-          Subnets:
-            - !Ref PublicSubnet1
-            - !Ref PublicSubnet2
-      LoadBalancers:
-        - ContainerName: pipeline-devops-container
-          ContainerPort: 80
-          TargetGroupArn: !Ref ALBTargetGroup
-    DependsOn: ALBListener
-
-# -------------------
-# Outputs
-# -------------------
 Outputs:
-  VPCId:
-    Description: ID da VPC criada
-    Value: !Ref VPC
+  WebsiteBucketName:
+    Description: 'Nome do bucket S3 para website'
+    Value: !Ref WebsiteBucket
 
-  PublicSubnet1Id:
-    Description: ID da primeira Subnet pública
-    Value: !Ref PublicSubnet1
+  WebsiteURL:
+    Description: 'URL do website hospedado no S3'
+    Value: !GetAtt WebsiteBucket.WebsiteURL
 
-  PublicSubnet2Id:
-    Description: ID da segunda Subnet pública
-    Value: !Ref PublicSubnet2
-
-  LoadBalancerDNS:
-    Description: DNS do Application Load Balancer
-    Value: !GetAtt ApplicationLoadBalancer.DNSName
-
-  ECRRepositoryName:
-    Description: Nome do repositório ECR
-    Value: !Ref ECRRepository
-
-  ECRRepositoryURI:
-    Description: URI completa do repositório ECR
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}"
-
-  ECSClusterName:
-    Description: Nome do Cluster ECS
-    Value: !Ref ECSCluster
-
-  ECSServiceName:
-    Description: Nome do Serviço ECS
-    Value: !Ref ECSService
-
+  AlertsTopicArn:
+    Description: 'ARN do tópico SNS para alertas'
+    Value: !Ref AlertsTopic
