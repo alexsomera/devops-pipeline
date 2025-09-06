@@ -33,6 +33,37 @@ O arquivo [`iac/iac.yml`](iac/iac.yml) utiliza o AWS CloudFormation para criar r
 
 ---
 
+## 📜 Scripts de Deploy usando Containers
+
+Este projeto inclui scripts automatizados para deploy da aplicação usando Docker em diferentes ambientes:
+
+### Scripts Disponíveis:
+- **`deploy-local.ps1`** - Deploy local para desenvolvimento (Windows)
+- **`deploy-production.ps1`** - Deploy para produção com Docker Compose (Windows)
+- **`deploy-aws-ecs.ps1`** - Deploy para AWS ECS (Windows)
+- **`container-utils.ps1`** - Utilitários de gerenciamento de containers (Windows)
+- **`deploy.sh`** - Deploy simplificado para Linux/Mac
+
+### Uso Rápido:
+
+```powershell
+# Deploy local
+.\scripts\deploy-local.ps1
+
+# Deploy para produção
+.\scripts\deploy-production.ps1 -Environment production
+
+# Deploy AWS ECS
+.\scripts\deploy-aws-ecs.ps1 -CreateInfrastructure
+
+# Utilitários
+.\scripts\container-utils.ps1 -Action status
+```
+
+📖 **Documentação completa**: [`scripts/README.md`](scripts/README.md)
+
+---
+
 ## Como Executar Localmente
 
 ```bash
