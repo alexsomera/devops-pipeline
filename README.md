@@ -1,16 +1,10 @@
 # Pipeline DevOps - Fase 2
 
-## 🌐 Aplicação em Produção
-
-> **🔗 URL da aplicação disponível no GitHub Actions Summary após cada deploy**
-> 
-> _Acesse o workflow mais recente em [Actions](https://github.com/alexsomera/devops-pipeline/actions) para ver o link da aplicação_
-
-## 📋 Sobre o Projeto
+## Sobre o Projeto
 
 Projeto React containerizado com Docker e deploy na AWS usando práticas de DevOps, desenvolvido para a fase 2 da Disciplina DevOps na Prática do Curso de Análise e Desenvolvimento de Sistemas da PUCRS.
 
-### 🏗️ Arquitetura AWS
+### Arquitetura AWS
 
 ```
 Internet → ALB → ECS Fargate → React App (Nginx)
@@ -40,13 +34,7 @@ O pipeline automatizado executa as seguintes etapas:
 - **Security Scan**: Verificação de vulnerabilidades
 - **Health Check**: Validação da aplicação
 
-### **Como acessar a aplicação após o deploy:**
-1. Acesse [GitHub Actions](https://github.com/alexsomera/devops-pipeline/actions)
-2. Clique na execução mais recente
-3. Veja a aba **"Summary"** do job de deploy
-4. O link da aplicação estará destacado no relatório
-
-## 🏗️ Infraestrutura como Código (IaC)
+## Infraestrutura como Código (IaC)
 
 ### **Template Principal: `iac/iac.yml`**
 
@@ -62,41 +50,36 @@ Template CloudFormation único que cria toda a infraestrutura necessária:
 
 ### **Deploy da Infraestrutura:**
 
-#### **AWS Academy (PowerShell):**
-```powershell
-# Deploy rápido (nginx público)
-.\scripts\academy-quick.ps1
+#### **AWS Academy:**
+Obtenha as credenciais clicando em `Start Lab`
+```bash
+# Configura aws
+aws configure
 
-# Deploy com aplicação customizada
-.\scripts\academy-quick.ps1 -WithCustomImage
+# Configura aws session token
+aws configure set aws_session_token
 ```
-
 #### **Deploy Manual:**
-```powershell
-.\scripts\deploy.ps1 -ProjectName "meu-projeto" -Environment "academy" -UseCustomImage
+Rode o comando informe o e-mail que receberá as notificações e alarmes do CloudWatch
+```bash
+aws cloudformation deploy --template-file iac/iac.yml --stack-name pipeline-devops --capabilities CAPABILITY_IAM --parameter-overrides NotificationEmail=seuEmailAqui
 ```
 
 ## 🛠️ Tecnologias Utilizadas
 
-### **Frontend**
-- ⚛️ **React 18.3.1** - Interface de usuário
-- 🎨 **Bootstrap 5.3.3** - Estilização
-- 🧪 **Jest + RTL** - Testes automatizados
-- 📱 **Responsive Design** - Compatível com mobile
-
 ### **DevOps & Infrastructure**
-- 🐳 **Docker** - Containerização multi-stage
-- ☁️ **AWS ECS Fargate** - Orquestração serverless
-- 🔄 **AWS ECR** - Repositório de imagens
-- ⚖️ **AWS ALB** - Load balancer
-- 📊 **CloudWatch** - Monitoramento e logs
-- 🏗️ **CloudFormation** - Infrastructure as Code
+- **Docker** - Containerização multi-stage
+- **AWS ECS Fargate** - Orquestração serverless
+- **AWS ECR** - Repositório de imagens
+- **AWS ALB** - Load balancer
+- **CloudWatch** - Monitoramento e logs
+- **CloudFormation** - Infrastructure as Code
 
 ### **CI/CD**
-- 🔄 **GitHub Actions** - Pipeline automatizado
-- 🛡️ **Security Scanning** - Análise de vulnerabilidades
-- 📈 **Automated Testing** - Execução automática de testes
-- 📦 **Artifact Management** - Gerenciamento de artefatos
+- **GitHub Actions** - Pipeline automatizado
+- **Security Scanning** - Análise de vulnerabilidades
+- **Automated Testing** - Execução automática de testes
+- **Artifact Management** - Gerenciamento de artefatos
 
 ## 📁 Estrutura do Projeto
 
@@ -106,10 +89,6 @@ devops-pipeline/
 ├── 📁 public/                  # Arquivos públicos
 ├── 📁 iac/                     # Infrastructure as Code
 │   └── iac.yml      # Template CloudFormation único
-├── 📁 scripts/                 # Scripts de automação
-│   ├── deploy.ps1             # Deploy principal
-│   ├── destroy.ps1            # Destruir infraestrutura  
-│   └── academy-quick.ps1      # Deploy rápido AWS Academy
 ├── 📁 .github/workflows/       # GitHub Actions
 │   └── pipeline-CI-CD.yml     # Pipeline principal
 ├── 🐳 Dockerfile              # Multi-stage Docker build
@@ -117,12 +96,12 @@ devops-pipeline/
 └── 📋 package.json            # Dependências Node.js
 ```
 
-## 📊 Monitoramento e Logs
+## Monitoramento e Logs
 
 ### **CloudWatch Dashboards**
-- 📈 **CPU e Memory**: Utilização do ECS
-- 🌐 **Load Balancer**: Requests e response time
-- 📋 **Logs**: Logs estruturados da aplicação
+- **CPU e Memory**: Utilização do ECS
+- **Load Balancer**: Requests e response time
+- **Logs**: Logs estruturados da aplicação
 
 ### **Como acessar:**
 1. Execute o deploy via GitHub Actions
@@ -130,14 +109,20 @@ devops-pipeline/
 3. Ou acesse diretamente via console AWS
 
 
-
 ## Como Fazer Deploy
 
 ### **GitHub Actions (Automático)**
+Toda alteração na branch `main` dispara o pipeline de CI/CD
 ```bash
 # Push para main dispara deploy automático
 git push origin main
 ```
+
+### **Como acessar a aplicação após o deploy:**
+1. Acesse [GitHub Actions](https://github.com/alexsomera/devops-pipeline/actions)
+2. Clique na execução mais recente
+3. Veja a aba **"Summary"** do job de deploy
+4. O link da aplicação estará destacado no relatório
 
 ---
 
@@ -196,7 +181,71 @@ npm test
 npm run test:ci
 ```
 
-### 🔧 Tecnologias Utilizadas
+## 🐳 Docker Local
+
+### **Execução com Docker (Container Único)**
+```bash
+# Build da imagem local
+docker build -t pipeline-devops-local:latest .
+
+# Executar container
+docker run -d \
+  --name pipeline-devops-local \
+  -p 3000:80 \
+  --restart unless-stopped \
+  pipeline-devops-local:latest
+
+# Acessar aplicação
+# http://localhost:3000
+```
+
+### **Comandos Úteis Docker**
+```bash
+# Ver logs do container
+docker logs -f pipeline-devops-local
+
+# Parar container
+docker stop pipeline-devops-local
+
+# Remover container
+docker rm pipeline-devops-local
+
+# Remover imagem
+docker rmi pipeline-devops-local:latest
+
+# Verificar status
+docker ps | grep pipeline-devops-local
+```
+
+### **Docker Compose (Orquestração Multi-Container)**
+```bash
+# Subir todos os serviços
+docker-compose up -d
+
+# Ver logs de todos os serviços
+docker-compose logs -f
+
+# Parar todos os serviços
+docker-compose down
+
+# Rebuild e restart
+docker-compose up -d --build
+```
+
+### **Environment Variables para Docker**
+```bash
+# Definir variáveis de ambiente
+export DOCKERHUB_USERNAME=local
+export DOCKER_IMAGE_NAME=pipeline-devops
+export IMAGE_TAG=latest
+
+# Ou usar arquivo .env
+echo "DOCKERHUB_USERNAME=local" > .env
+echo "DOCKER_IMAGE_NAME=pipeline-devops" >> .env
+echo "IMAGE_TAG=latest" >> .env
+```
+
+### Tecnologias Utilizadas
 
 - **React 18.3.1** - Biblioteca para construção de interfaces
 - **Vite 7.1.4** - Build tool moderna e rápida
@@ -204,52 +253,36 @@ npm run test:ci
 - **ESLint** - Linter para manter qualidade do código
 - **Bootstrap 5.3.3** - Framework CSS
 
-### 🛡️ Segurança
+### Segurança
 
 ✅ **0 vulnerabilidades** - Todas as vulnerabilidades de segurança foram resolvidas com a migração para Vite.
 
 Anteriormente o projeto tinha 29 vulnerabilidades com react-scripts, agora está completamente limpo.
 
-### 📁 Estrutura do Projeto
+## 📁 Estrutura do Projeto
 
 ```
-src/
-├── components/          # Componentes React
-│   ├── About/
-│   ├── CarForm/
-│   ├── CarsList/
-│   ├── Footer/
-│   ├── Header/
-│   ├── Home/
-│   └── ...
-├── App.jsx             # Componente principal
-├── index.jsx           # Ponto de entrada
-└── ...
-
-public/                 # Arquivos estáticos
-build/                  # Build de produção (gerado)
+devops-pipeline/
+├── 📁 src/                     # Código fonte React
+├── 📁 public/                  # Arquivos públicos
+├── 📁 build/                  # Build de produção (gerado)
+├── 📁 iac/                     # Infrastructure as Code
+│   └── iac.yml                 # Template CloudFormation único
+├── 📁 .github/workflows/       # GitHub Actions
+│   └── pipeline-CI-CD.yml     # Pipeline principal CI/CD
+├── 🐳 Dockerfile              # Multi-stage Docker build
+├── 🐙 docker-compose.yml      # Orquestração multi-container
+├── ⚙️ nginx.conf              # Configuração Nginx
+├── 📋 package.json            # Dependências Node.js
+├── ⚡ vite.config.js          # Configuração Vite
+├── 🧪 vitest.config.js        # Configuração testes
+└── 📚 README.md               # Documentação
 ```
 
-### 🔄 Migração Realizada
-
+### Migração Realizada
 Esta aplicação foi migrada do Create React App para Vite pelos seguintes motivos:
 
 1. **Segurança**: Eliminação de 29 vulnerabilidades
 2. **Performance**: Build mais rápido com Vite
 3. **Modernidade**: Ferramentas mais atualizadas
 4. **Manutenibilidade**: Menos dependências problemáticas
-
-
-## 🔄 Workflow do Desenvolvimento
-
-1. **Desenvolvimento local**: `npm start`
-2. **Executar testes**: `npm test`
-3. **Commit e push**: O pipeline é executado automaticamente
-4. **Verificar deploy**: Acessar [GitHub Actions](https://github.com/alexsomera/devops-pipeline/actions)
-5. **Acessar aplicação**: Link disponível no Summary do workflow
-
----
-
-> 🎉 **Deploy automático:** Toda alteração na branch `main` dispara o pipeline de CI/CD
-> 
-> 📱 **Link da aplicação:** Disponível no GitHub Actions Summary após cada deploy
