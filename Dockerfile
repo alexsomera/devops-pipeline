@@ -26,6 +26,9 @@ FROM nginx:alpine
 # Copia os arquivos buildados do estágio anterior para o diretório do nginx
 COPY --from=build /app/build /usr/share/nginx/html
 
+# Garante que o favicon está presente
+COPY --from=build /app/build/favicon.ico /usr/share/nginx/html/favicon.ico
+
 # Copia o arquivo de health check para o diretório do nginx
 COPY public/health.json /usr/share/nginx/html/health.json
 
