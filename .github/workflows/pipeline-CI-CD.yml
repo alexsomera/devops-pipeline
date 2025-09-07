@@ -130,18 +130,51 @@ jobs:
           
           EOF
 
-      - name: Forçar redeploy do ECS Service
+      - name: Atualizar Task Definition e Deploy do ECS Service
         env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
-          # Força nova deployment do ECS Service
+          # Obter a task definition atual
+          TASK_DEFINITION=$(aws ecs describe-task-definition \
+            --task-definition pipeline-devops-task \
+            --region ${{ env.AWS_REGION }} \
+            --query 'taskDefinition')
+          
+          # Criar nova task definition com a imagem atualizada
+          NEW_IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          echo "🐳 Atualizando task definition com nova imagem: ${NEW_IMAGE_URI}"
+          
+          # Preparar nova task definition
+          NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE_URI "$NEW_IMAGE_URI" '
+            .containerDefinitions[0].image = $IMAGE_URI |
+            del(.taskDefinitionArn) |
+            del(.revision) |
+            del(.status) |
+            del(.requiresAttributes) |
+            del(.placementConstraints) |
+            del(.compatibilities) |
+            del(.registeredAt) |
+            del(.registeredBy)
+          ')
+          
+          # Registrar nova task definition
+          NEW_TASK_DEFINITION_ARN=$(echo $NEW_TASK_DEFINITION | aws ecs register-task-definition \
+            --region ${{ env.AWS_REGION }} \
+            --cli-input-json file:///dev/stdin \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          
+          echo "✅ Nova task definition registrada: ${NEW_TASK_DEFINITION_ARN}"
+          
+          # Atualizar o serviço ECS com a nova task definition
           aws ecs update-service \
             --cluster pipeline-devops \
             --service pipeline-devops-service \
-            --force-new-deployment \
+            --task-definition "${NEW_TASK_DEFINITION_ARN}" \
             --region ${{ env.AWS_REGION }}
           
-          echo "🔄 Redeploy do ECS Service forçado"
+          echo "🔄 Serviço ECS atualizado com nova task definition"
           
           # Aguarda o deployment estabilizar
           echo "⏳ Aguardando deployment estabilizar..."
@@ -150,12 +183,17 @@ jobs:
             --services pipeline-devops-service \
             --region ${{ env.AWS_REGION }}
           
-          echo "✅ Deployment estabilizado"
+          echo "✅ Deployment estabilizado com sucesso"
 
-      - name: Registrar sucesso do redeploy
+      - name: Registrar sucesso do deploy
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          🔄 **Redeploy ECS:** Serviço atualizado com nova imagem
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          🔄 **Deploy ECS:** Task definition atualizada com nova imagem
+          
+          🐳 **Nova Imagem:** ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
           
           EOF
 
