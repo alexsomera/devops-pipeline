@@ -20,7 +20,7 @@ Parameters:
 
 Resources:
   # -------------------
-  # REDE (VPC Própria para AWS Academy)
+  # REDE (VPC)
   # -------------------
   VPC:
     Type: AWS::EC2::VPC
@@ -137,7 +137,7 @@ Resources:
               }
             ]
           }
-  # Security Groups (usar VPC própria)
+  # Security Groups
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -189,14 +189,14 @@ Resources:
       Port: 80
       Protocol: HTTP
       TargetType: ip
-      HealthCheckPath: /  # Health check genérico para começar
+      HealthCheckPath: /  # Health check genérico - funciona com nginx padrão
       HealthCheckProtocol: HTTP
       HealthCheckIntervalSeconds: 30
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 5  # Mais tolerante
+      UnhealthyThresholdCount: 10  # Mais tolerante para dar tempo do container inicializar
       Matcher:
-        HttpCode: 200,404  # Aceita 404 também para começar
+        HttpCode: 200  # Nginx padrão retorna 200 na raiz
       Tags:
         - Key: Name
           Value: pipeline-devops-tg
@@ -242,14 +242,15 @@ Resources:
           PortMappings:
             - ContainerPort: 80
               Protocol: tcp
+          # Health check simples que funciona com nginx padrão e aplicação customizada
           HealthCheck:
             Command:
               - CMD-SHELL
-              - "curl -f http://localhost/health.json || exit 1"
+              - "curl -f http://localhost/ || exit 1"  # Verifica apenas se responde na raiz
             Interval: 30
             Timeout: 5
             Retries: 3
-            StartPeriod: 60
+            StartPeriod: 60  # Tempo suficiente para nginx inicializar
           Environment:
             - Name: NODE_ENV
               Value: production

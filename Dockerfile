@@ -26,6 +26,9 @@ FROM nginx:alpine
 # Copia os arquivos buildados do estágio anterior para o diretório do nginx
 COPY --from=build /app/build /usr/share/nginx/html
 
+# Copia o arquivo de health check para o diretório do nginx
+COPY public/health.json /usr/share/nginx/html/health.json
+
 # Copia a configuração personalizada do nginx para suportar SPA
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
