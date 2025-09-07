@@ -136,17 +136,17 @@ jobs:
           IMAGE_TAG: ${{ steps.image_tag.outputs.tag }}
         run: |
           # Obter a task definition atual
-          TASK_DEFINITION=$(aws ecs describe-task-definition \
+          aws ecs describe-task-definition \
             --task-definition pipeline-devops-task \
             --region ${{ env.AWS_REGION }} \
-            --query 'taskDefinition')
+            --query 'taskDefinition' > current-task-def.json
           
           # Criar nova task definition com a imagem atualizada
           NEW_IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
           echo "🐳 Atualizando task definition com nova imagem: ${NEW_IMAGE_URI}"
           
-          # Preparar nova task definition
-          NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE_URI "$NEW_IMAGE_URI" '
+          # Preparar nova task definition e salvar em arquivo
+          jq --arg IMAGE_URI "$NEW_IMAGE_URI" '
             .containerDefinitions[0].image = $IMAGE_URI |
             del(.taskDefinitionArn) |
             del(.revision) |
@@ -156,12 +156,12 @@ jobs:
             del(.compatibilities) |
             del(.registeredAt) |
             del(.registeredBy)
-          ')
+          ' current-task-def.json > new-task-def.json
           
           # Registrar nova task definition
-          NEW_TASK_DEFINITION_ARN=$(echo $NEW_TASK_DEFINITION | aws ecs register-task-definition \
+          NEW_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
             --region ${{ env.AWS_REGION }} \
-            --cli-input-json file:///dev/stdin \
+            --cli-input-json file://new-task-def.json \
             --query 'taskDefinition.taskDefinitionArn' \
             --output text)
           
